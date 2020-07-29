@@ -1,49 +1,29 @@
 import requests
-from bs4 import BeautifulSoup
-from google import google
-
-
-
-
-def _get_wiki_url(text):
-	search_result = google.search(text, 1)
-	print('search_result:')
-	print(search_result)
-	for result in search_result:
-		if result.link and ('wikipedia.org' in result.link):
-			return result.link
-
-	return ''
-
-
-def _get_wiki_paragraph(url):
-	headers = {'User-Agent': 'Googlebot', 'From': 'YOUR EMAIL ADDRESS' }
-	pageSource = requests.get(url, headers=headers).text
-
-	answer = BeautifulSoup(pageSource, 'lxml').find('div', class_='mw-parser-output').find('p')
-	print('answer:', answer)
-	for tag in answer.find_all('sup'):
-	    tag.replaceWith('')
-
-	return answer.text
-
-
-def _get_wiki_description(text):
-	desc = google.get_wiki_description(text)
-	return desc
-
+from .utils import *
 
 def response(text):
-	desc = ''
-	# desc = _get_wiki_description(text)
-	if desc != '':
-		return desc
+	# get search url for GoogleSearch
+	url = get_google_search_url(text, start_num=0, total_num=5)
 
-	url = _get_wiki_url(text)
-	if url == '':
-		return ''
-	else:
-		return _get_wiki_paragraph(url)
+	# get html by url
+	html = get_google_search_html(url)
+	if not html:
+		return None
+
+	soup = BeautifulSoup(html, 'lxml')
+
+	# try to get simple description by GoogleSearch result
+	answer = get_wiki_description(soup)
+	if answer:
+		return answer
+
+	# if we didn't get simple description, then we try to get link of Wiki by GoogleSearch result
+	link = get_wiki_link(soup)
+	if not link:
+		return None
+
+	# return the first paragraph of wikipedia page
+	return get_wiki_paragraph(link)
 
 
 def test():
@@ -51,10 +31,9 @@ def test():
 		try:
 			text = input('question:')
 			answer = response(text)
-			if answer == '':
+			if answer == None:
 				answer = '我不知道ㄟ'
-			print('answer:')
-			print(answer)
+			print('answer:', answer)
 		except KeyboardInterrupt:
 			break
 	return

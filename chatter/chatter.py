@@ -1,7 +1,6 @@
 import os
 from os.path import join, exists
 import copy
-from datetime import datetime
 import logging
 from easydict import EasyDict
 
@@ -9,9 +8,9 @@ import torch
 from transformers.modeling_gpt2 import GPT2Config, GPT2LMHeadModel
 from transformers import BertTokenizer
 import torch.nn.functional as F
-
-from . import config
 from googletrans import Translator
+
+
 
 
 file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -51,29 +50,18 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
 
 
 class Chatter():
-    def __init__(self):
-        self.args = self._process_config()
-
+    def __init__(self, config):
+        self.args = self._process_config(config)
         self._set_logger()
         self.device = self._get_device()
         self.tokenizer = self._get_tokenizer()
         self.dialogue_model = self._get_dialogue_model()
         self.mmi_model = self._get_mmi_model()
         self.translator = self._get_translator()
-        self.chatlog_writer = self._get_chatlog_writer()
         self.history = []
 
 
-    def __del__(self):
-
-        self.write_chatlog("------對話結束------\n")
-        self.write_chatlog("\n")
-
-        if self.chatlog_writer:
-            self.chatlog_writer.close()
-
-
-    def _process_config(self):
+    def _process_config(self, config):
         args = EasyDict()
 
         args.is_debug = config.is_debug if config.is_debug else False
@@ -81,8 +69,6 @@ class Chatter():
         args.gpu = config.gpu if config.gpu else ''
 
         args.device = config.device if config.device else 'cpu'
-
-        args.chatlog_path = config.chatlog_path if config.chatlog_path else ''
 
         args.max_len = config.max_len if config.max_len else 25
 
@@ -111,37 +97,31 @@ class Chatter():
         return args
 
 
-    def _set_logger(self):
-        if self.args.is_debug:
-            logging.basicConfig(level=logging.INFO)
-        else:
-            logging.basicConfig(level=logging.WARNING)
-
-
     def _get_device(self):
+        args = self.args
         # set visible gpu.
-        if self.args.gpu:
-            os.environ["CUDA_VISIBLE_DEVICES"] = self.args.gpu
+        if args.gpu:
+            os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
         # check if gpu is available. 
         gpu_available = torch.cuda.is_available()
-        if self.args.gpu and gpu_available:
-            logging.info("Using gpu: %s" % (self.args.gpu))
+        if args.gpu and gpu_available:
+            logging.info("Using gpu: %s" % (args.gpu))
         else:
             logging.info("Using cpu.")
 
         # return used device
-        if gpu_available and self.args.device :
-            return self.args.device
+        if gpu_available and args.device :
+            return args.device
         else:
             return 'cpu'
 
 
     def _get_tokenizer(self):
-
+        args = self.args
         logging.info("Start getting tokenizer ")
 
-        tokenizer = BertTokenizer(vocab_file=self.args.vocab_path)
+        tokenizer = BertTokenizer(vocab_file=args.vocab_path)
 
         logging.info("Finish getting tokenizer ")
 
@@ -149,10 +129,10 @@ class Chatter():
 
 
     def _get_dialogue_model(self):
-
         logging.info("Start getting dialogue model.")
 
-        dialogue_model = GPT2LMHeadModel.from_pretrained(self.args.dialogue_model_path)
+        args = self.args
+        dialogue_model = GPT2LMHeadModel.from_pretrained(args.dialogue_model_path)
         dialogue_model.to(self.device)
         dialogue_model.eval()
         
@@ -162,10 +142,10 @@ class Chatter():
 
 
     def _get_mmi_model(self):
-
         logging.info("Start getting mmi model.")
 
-        mmi_model = GPT2LMHeadModel.from_pretrained(self.args.mmi_model_path)
+        args = self.args
+        mmi_model = GPT2LMHeadModel.from_pretrained(args.mmi_model_path)
         mmi_model.to(self.device)
         mmi_model.eval()
 
@@ -174,36 +154,18 @@ class Chatter():
         return mmi_model
 
 
-    def _get_chatlog_writer(self):
-        if not self.args.chatlog_path:
-            return None
-
-        else:
-            if not os.path.exists(self.args.chatlog_path):
-                os.makedirs(self.args.chatlog_path)
-            chatlog_writer = open(self.args.chatlog_path + '/chatlog.txt', 'a', encoding='utf-8')
-            chatlog_writer.write("---聊天開始於 {} :---\n".format(datetime.now()))
-            return chatlog_writer 
-            
-
     def _get_translator(self):
-        if self.args.use_pretrained:
+        args = self.args
+        if args.use_pretrained:
             return Translator()
         else:
             return None
 
 
-    def write_chatlog(self, text):
-        if self.chatlog_writer is not None:
-            self.chatlog_writer.write(text + '\n')
-
-
     def response(self, text):
-
         if self.translator:
             text = self.translator.translate(text, dest='zh-cn').text
 
-        self.write_chatlog('user: ' + text)
         input_ids = self.get_input_ids(text)
         candidate_response = self.get_candidate_response(input_ids)
         response = self.select_response(candidate_response)
@@ -213,44 +175,52 @@ class Chatter():
         if self.translator:
             text = self.translator.translate(text, dest='zh-tw').text
 
-        self.write_chatlog('chatter: ' + text)
         return text
 
+
+    def update_history(self, text):
+        self.history.append(self.tokenizer.encode(text))
+
+
     def get_input_ids(self, text):
+        args = self.args
+
         self.history.append(self.tokenizer.encode(text))
 
         # 每个input以[CLS]为开头
         input_ids = [self.tokenizer.cls_token_id]  
-        for history_id, history_utr in enumerate(self.history[-self.args.max_history_len:]):
+        for history_id, history_utr in enumerate(self.history[-args.max_history_len:]):
             input_ids.extend(history_utr)
             input_ids.append(self.tokenizer.sep_token_id)
 
         # 用于批量生成response，维度为(candidate_num,token_len)
-        input_ids = [copy.deepcopy(input_ids) for _ in range(self.args.candidate_num)]
+        input_ids = [copy.deepcopy(input_ids) for _ in range(args.candidate_num)]
         input_ids = torch.tensor(input_ids).long().to(self.device)
         return input_ids
 
 
     def get_candidate_response(self, input_ids):
+        args = self.args
+
         generated = []  # 二维数组，维度为(生成的response的最大长度，candidate_num)，generated[i,j]表示第j个response的第i个token的id
         finish_set = set()  # 标记是否所有response均已生成结束，若第i个response生成结束，即生成了sep_token_id，则将i放入finish_set
         
         # 最多生成max_len个token
-        for _ in range(self.args.max_len):
+        for _ in range(args.max_len):
 
             outputs = self.dialogue_model(input_ids=input_ids)
             next_token_logits = outputs[0][:, -1, :]
 
             # 对于已生成的结果generated中的每个token添加一个重复惩罚项，降低其生成概率
-            for index in range(self.args.candidate_num):
+            for index in range(args.candidate_num):
                 for token_id in set([token_ids[index] for token_ids in generated]):
-                    next_token_logits[index][token_id] /= self.args.repetition_penalty
-            next_token_logits = next_token_logits / self.args.temperature
+                    next_token_logits[index][token_id] /= args.repetition_penalty
+            next_token_logits = next_token_logits / args.temperature
 
             # 对于[UNK]的概率设为无穷小，也就是说模型的预测结果不可能是[UNK]这个token
             for next_token_logit in next_token_logits:
                 next_token_logit[self.tokenizer.convert_tokens_to_ids('[UNK]')] = -float('Inf')
-            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=self.args.topk, top_p=self.args.topp)
+            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=args.topk, top_p=args.topp)
 
             # torch.multinomial表示从候选集合中无放回地进行抽取num_samples个元素，权重越高，抽到的几率越高，返回元素的下标
             next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
@@ -262,7 +232,7 @@ class Chatter():
             
             # 检验是否所有的response均已生成[SEP]
             finish_flag = True  # 是否所有的response均已生成[SEP]的token
-            for index in range(self.args.candidate_num):
+            for index in range(args.candidate_num):
                 if index not in finish_set:  # response批量生成未完成
                     finish_flag = False
                     break
@@ -274,7 +244,7 @@ class Chatter():
             input_ids = torch.cat((input_ids, next_token), dim=-1)
 
         candidate_responses = []  # 生成的所有候选response
-        for batch_index in range(self.args.candidate_num):
+        for batch_index in range(args.candidate_num):
             response = []
             for token_index in range(len(generated)):
                 if generated[token_index][batch_index] != self.tokenizer.sep_token_id:
@@ -287,8 +257,10 @@ class Chatter():
 
 
     def select_response(self, candidate_response):
+        args = self.args
+
         loss_list = []
-        reverse_history = reversed(self.history[-self.args.max_history_len:])
+        reverse_history = reversed(self.history[-args.max_history_len:])
 
         for response in candidate_response:
             mmi_input_id = [self.tokenizer.cls_token_id]  # 每个input以[CLS]为开头
@@ -302,10 +274,9 @@ class Chatter():
             out = self.mmi_model(input_ids=mmi_input_tensor, labels=mmi_input_tensor)
             loss = out[0].item()
 
-            if self.args.is_debug:
+            if args.is_debug:
                 text = self.tokenizer.convert_ids_to_tokens(response)
                 print("{} loss:{}".format("".join(text), loss))
-                self.write_chatlog("{} loss:{}\n".format("".join(text), loss))
 
             loss_list.append(loss)
 
@@ -327,15 +298,15 @@ class Chatter():
 
 
 def test():
-    chatter = Chatter()
+    import config
+    chatbot = Chatter(config)
     while True:
         try:
             text = input("user:")
-            response = chatter.response(text)
-            print('chatbot:', response)
+            res = chatbot.response(text)
+            print('chatbot:', res)
 
         except KeyboardInterrupt:
-            chatter.__del__()
             break
 
 
