@@ -4,4 +4,3 @@ python train.py                \
     --epochs=3 \
     --batch_size=16 \
     --raw \
-    --train_mmi
