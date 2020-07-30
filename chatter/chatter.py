@@ -11,8 +11,6 @@ import torch.nn.functional as F
 from googletrans import Translator
 
 
-
-
 file_dir = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -51,8 +49,9 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
 
 class Chatter():
     def __init__(self, config):
+        logging.info('Chatter Start Initializing.')
+
         self.args = self._process_config(config)
-        self._set_logger()
         self.device = self._get_device()
         self.tokenizer = self._get_tokenizer()
         self.dialogue_model = self._get_dialogue_model()
@@ -60,39 +59,40 @@ class Chatter():
         self.translator = self._get_translator()
         self.history = []
 
+        logging.info('Chatter Finish Initializing.')
+
 
     def _process_config(self, config):
+
         args = EasyDict()
 
-        args.is_debug = config.is_debug if config.is_debug else False
+        args.debug = config.get('debug', False)
 
-        args.gpu = config.gpu if config.gpu else ''
+        args.gpu = config.get('gpu', '')
 
-        args.device = config.device if config.device else 'cpu'
+        args.device = config.get('device', 'cpu')
 
-        args.max_len = config.max_len if config.max_len else 25
+        args.max_len = config.get('max_len', 25)
 
-        args.max_history_len = config.max_history_len if config.max_history_len else 5
+        args.max_history_len = config.get('max_history_len', 5)
 
-        args.candidate_num = config.candidate_num if config.candidate_num else 5
+        args.candidate_num = config.get('candidate_num', 5)
 
-        args.repetition_penalty = config.repetition_penalty if config.repetition_penalty else 2
+        args.repetition_penalty = config.get('repetition_penalty', 2)
 
-        args.temperature = config.temperature if config.temperature else 1
+        args.temperature = config.get('temperature', 1)
 
-        args.topk = config.topk if config.topk else 8
+        args.topk = config.get('topk', 8)
 
-        args.topp = config.topp if config.topp else 0
+        args.topp = config.get('topp', 0)
 
-        args.use_pretrained = config.use_pretrained if config.use_pretrained else False
-        if args.use_pretrained:
-            args.dialogue_model_path = join(file_dir, 'pretrained_model/dialogue')
-            args.mmi_model_path = join(file_dir, 'pretrained_model/mmi')
-            args.vocab_path = join(file_dir, 'vocab/vocab_pretrained.txt')
-        else:
-            args.dialogue_model_path = join(file_dir, 'my_model/dialogue')
-            args.mmi_model_path = join(file_dir, 'my_model/mmi')
-            args.vocab_path = join(file_dir, 'vocab/vocab_chat.txt')
+        args.use_translator = config.get('use_translator', False)
+        
+        args.dialogue_model_path = join(file_dir, config.model_path, 'dialogue')
+        args.mmi_model_path = join(file_dir, config.model_path, 'mmi')
+        args.vocab_path = join(file_dir, config.model_path, 'vocab.txt')
+        
+        logging.info('Finish Processing Config.')
 
         return args
 
@@ -111,7 +111,7 @@ class Chatter():
             logging.info("Using cpu.")
 
         # return used device
-        if gpu_available and args.device :
+        if gpu_available and args.device:
             return args.device
         else:
             return 'cpu'
@@ -156,7 +156,8 @@ class Chatter():
 
     def _get_translator(self):
         args = self.args
-        if args.use_pretrained:
+        if args.use_translator:
+            logging.info("Using Translator.")
             return Translator()
         else:
             return None
@@ -168,6 +169,7 @@ class Chatter():
 
         input_ids = self.get_input_ids(text)
         candidate_response = self.get_candidate_response(input_ids)
+        candidate_response = self.candidate_response_filter(candidate_response)
         response = self.select_response(candidate_response)
         text = self.tokenizer.convert_ids_to_tokens(response)
         text = "".join(text)
@@ -178,14 +180,35 @@ class Chatter():
         return text
 
 
-    def update_history(self, text):
-        self.history.append(self.tokenizer.encode(text))
+    def update_history_text(self, text):
+        args = self.args
+
+        if len(text) > args.max_len:
+            text = text[:args.max_len]
+
+        ids = self.tokenizer.encode(text)
+        self.history.append(ids)
+
+        if len(self.history) > args.max_history_len:
+            self.history = self.history[len(self.history)-args.max_history_len:]
+
+
+    def update_history_id(self, ids):
+        args = self.args
+
+        if len(ids) > args.max_len:
+            ids = ids[:args.max_len]
+
+        self.history.append(ids)
+
+        if len(self.history) > args.max_history_len:
+            self.history = self.history[len(self.history)-args.max_history_len:]
 
 
     def get_input_ids(self, text):
         args = self.args
 
-        self.history.append(self.tokenizer.encode(text))
+        self.update_history_text(text)
 
         # 每个input以[CLS]为开头
         input_ids = [self.tokenizer.cls_token_id]  
@@ -256,6 +279,30 @@ class Chatter():
         return candidate_responses
 
 
+    def candidate_response_filter(self, candidate_response):
+        banned_list = []
+        pop_list = []
+        translator = Translator()
+        banned_words = ['圖片評論', '屎', '傻逼', '智障']
+        for i, response in enumerate(candidate_response):
+            text = ''.join(self.tokenizer.convert_ids_to_tokens(response))
+            text = translator.translate(text, dest='zh-tw').text
+
+            if text in self.history:
+                pop_list.append(i)
+
+            for banned_word in banned_words:
+                if banned_word in text:
+                    candidate_response.pop(i)
+                    break
+
+        if len(pop_list) != len(candidate_response):
+            for i in pop_list:
+                candidate_response.pop(i)
+        
+        return candidate_response
+
+
     def select_response(self, candidate_response):
         args = self.args
 
@@ -274,9 +321,9 @@ class Chatter():
             out = self.mmi_model(input_ids=mmi_input_tensor, labels=mmi_input_tensor)
             loss = out[0].item()
 
-            if args.is_debug:
+            if args.debug:
                 text = self.tokenizer.convert_ids_to_tokens(response)
-                print("{} loss:{}".format("".join(text), loss))
+                logging.info("{} loss:{}".format("".join(text), loss))
 
             loss_list.append(loss)
 
@@ -293,13 +340,18 @@ class Chatter():
         if best_response == "":
             best_response = pairs[0][0]
 
-        self.history.append(best_response)
+        self.update_history_id(best_response)
         return best_response
 
 
 def test():
     import config
-    chatbot = Chatter(config)
+    if config.debug:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.basicConfig(level=logging.DEBUG)
+
+    chatbot = Chatter(config.chatter)
     while True:
         try:
             text = input("user:")

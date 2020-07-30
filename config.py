@@ -1,14 +1,15 @@
 import os
 from easydict import EasyDict
 
+debug = True
 chatlog_path = './chatlog.txt'
 
-
 chatter = EasyDict()
-chatter.is_debug = False
+chatter.debug = debug
 chatter.gpu = '0'
 chatter.device = 'cuda'
-chatter.use_pretrained = True
+chatter.use_translator = True
+chatter.model_path = 'pretrained_model'
 chatter.max_len = 25
 chatter.max_history_len = 5
 chatter.candidate_num = 5

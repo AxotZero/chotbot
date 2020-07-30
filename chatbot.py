@@ -10,6 +10,13 @@ from chatter.chatter import Chatter
 import config
 
 
+def logging_setting():
+	if config.debug:
+		logging.basicConfig(level=logging.INFO)
+	else:
+		logging.basicConfig(level=logging.WARNING)
+
+
 def get_question(text):
 	
 	explain = ['知道', '理解', '解釋', '了解', '瞭解']
@@ -59,18 +66,8 @@ def get_question(text):
 
 class ChatBot():
 	def __init__(self):
-		self.args = config
-		self._set_logger()
 		self.chatter_bot = Chatter(config.chatter)
 		self.chatlog_writer = self._get_chatlog_writer()
-
-
-	def _set_logger(self):
-		args = self.args
-		if args.is_debug:
-			logging.basicConfig(level=logging.INFO)
-		else:
-			logging.basicConfig(level=logging.WARNING)
 
 
 	def __del__(self):
@@ -82,12 +79,10 @@ class ChatBot():
 
 
 	def _get_chatlog_writer(self):
-		args = self.args
-
-		if not args.chatlog_path:
+		if not config.chatlog_path:
 			return None
 		else:
-			chatlog_writer = open(args.chatlog_path, 'a+', encoding='utf-8')
+			chatlog_writer = open(config.chatlog_path, 'a+', encoding='utf-8')
 			chatlog_writer.write("---聊天開始於 {} :---\n".format(datetime.now()))
 			return chatlog_writer 
 
@@ -109,7 +104,7 @@ class ChatBot():
 			response = self.chatter_bot.response(text)
 			logging.info('chatter: ' + response)
 		else:
-			self.chatter_bot.update_history(response)
+			self.chatter_bot.update_history_text(response)
 			logging.info('answerer: ' + response)
 
 		self.write_chatlog('chatbot: '+ response)
@@ -118,6 +113,7 @@ class ChatBot():
 
 
 def test():
+	logging_setting()
 	chatbot = ChatBot()
 	while True:
 		try:
