@@ -11,9 +11,6 @@ import torch.nn.functional as F
 from googletrans import Translator
 
 
-file_dir = os.path.dirname(os.path.abspath(__file__))
-
-
 def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
     """ Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
         Args:
@@ -80,14 +77,13 @@ class Chatter():
 
         args.repetition_penalty = config.get('repetition_penalty', 2)
 
-        args.temperature = config.get('temperature', 1)
-
         args.topk = config.get('topk', 8)
 
         args.topp = config.get('topp', 0)
 
         args.use_translator = config.get('use_translator', False)
         
+        file_dir = os.path.dirname(os.path.abspath(__file__))
         args.dialogue_model_path = join(file_dir, config.model_path, 'dialogue')
         args.mmi_model_path = join(file_dir, config.model_path, 'mmi')
         args.vocab_path = join(file_dir, config.model_path, 'vocab.txt')
@@ -163,49 +159,7 @@ class Chatter():
             return None
 
 
-    def response(self, text):
-        if self.translator:
-            text = self.translator.translate(text, dest='zh-cn').text
-
-        input_ids = self.get_input_ids(text)
-        candidate_response = self.get_candidate_response(input_ids)
-        candidate_response = self.candidate_response_filter(candidate_response)
-        response = self.select_response(candidate_response)
-        text = self.tokenizer.convert_ids_to_tokens(response)
-        text = "".join(text)
-
-        if self.translator:
-            text = self.translator.translate(text, dest='zh-tw').text
-
-        return text
-
-
-    def update_history_text(self, text):
-        args = self.args
-
-        if len(text) > args.max_len:
-            text = text[:args.max_len]
-
-        ids = self.tokenizer.encode(text)
-        self.history.append(ids)
-
-        if len(self.history) > args.max_history_len:
-            self.history = self.history[len(self.history)-args.max_history_len:]
-
-
-    def update_history_id(self, ids):
-        args = self.args
-
-        if len(ids) > args.max_len:
-            ids = ids[:args.max_len]
-
-        self.history.append(ids)
-
-        if len(self.history) > args.max_history_len:
-            self.history = self.history[len(self.history)-args.max_history_len:]
-
-
-    def get_input_ids(self, text):
+    def _get_input_ids(self, text):
         args = self.args
 
         self.update_history_text(text)
@@ -222,7 +176,7 @@ class Chatter():
         return input_ids
 
 
-    def get_candidate_response(self, input_ids):
+    def _get_candidate_response(self, input_ids):
         args = self.args
 
         generated = []  # 二维数组，维度为(生成的response的最大长度，candidate_num)，generated[i,j]表示第j个response的第i个token的id
@@ -238,7 +192,6 @@ class Chatter():
             for index in range(args.candidate_num):
                 for token_id in set([token_ids[index] for token_ids in generated]):
                     next_token_logits[index][token_id] /= args.repetition_penalty
-            next_token_logits = next_token_logits / args.temperature
 
             # 对于[UNK]的概率设为无穷小，也就是说模型的预测结果不可能是[UNK]这个token
             for next_token_logit in next_token_logits:
@@ -279,7 +232,7 @@ class Chatter():
         return candidate_responses
 
 
-    def candidate_response_filter(self, candidate_response):
+    def _candidate_response_filter(self, candidate_response):
         banned_list = []
         pop_list = []
         translator = Translator()
@@ -303,7 +256,7 @@ class Chatter():
         return candidate_response
 
 
-    def select_response(self, candidate_response):
+    def _select_response(self, candidate_response):
         args = self.args
 
         loss_list = []
@@ -342,6 +295,48 @@ class Chatter():
 
         self.update_history_id(best_response)
         return best_response
+
+
+    def response(self, text):
+        if self.translator:
+            text = self.translator.translate(text, dest='zh-cn').text
+
+        input_ids = self._get_input_ids(text)
+        candidate_response = self._get_candidate_response(input_ids)
+        candidate_response = self._candidate_response_filter(candidate_response)
+        response = self._select_response(candidate_response)
+        text = self.tokenizer.convert_ids_to_tokens(response)
+        text = "".join(text)
+
+        if self.translator:
+            text = self.translator.translate(text, dest='zh-tw').text
+
+        return text
+
+
+    def update_history_text(self, text):
+        args = self.args
+
+        if len(text) > args.max_len:
+            text = text[:args.max_len]
+
+        ids = self.tokenizer.encode(text)
+        self.history.append(ids)
+
+        if len(self.history) > args.max_history_len:
+            self.history = self.history[len(self.history)-args.max_history_len:]
+
+
+    def update_history_id(self, ids):
+        args = self.args
+
+        if len(ids) > args.max_len:
+            ids = ids[:args.max_len]
+
+        self.history.append(ids)
+
+        if len(self.history) > args.max_history_len:
+            self.history = self.history[len(self.history)-args.max_history_len:]
 
 
 def test():

@@ -1,6 +1,5 @@
 import requests
 import time
-import requests
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -13,7 +12,7 @@ from bs4 import BeautifulSoup
 
 
 # PUBLIC
-def get_google_search_url(query, start_num=0, total_num=5):
+def _get_google_search_url(query, start_num=0, total_num=5):
 	'''
 	Descrpition:
 		Get google_search_url for input query.
@@ -102,7 +101,7 @@ def _get_link(li):
 	return _filter_link(link)
 
 
-def get_google_search_html(url):
+def _get_google_search_html(url):
 	'''
 	Description:
 		Get GoogleSearch HTML by url
@@ -134,7 +133,7 @@ def get_google_search_html(url):
 		return None
 
 
-def get_wiki_link(soup):
+def _get_wiki_link(soup):
 	'''
 	Description:
 		Get link of wiki from GoogleSearch HTML.
@@ -156,7 +155,7 @@ def get_wiki_link(soup):
 	return None
 
 
-def get_wiki_paragraph(url):
+def _get_wiki_paragraph(url):
 	'''
 	Description:
 		Get first paragraph from wikipage
@@ -179,7 +178,7 @@ def get_wiki_paragraph(url):
 		return None
 
 
-def get_wiki_description(soup):
+def _get_wiki_description(soup):
 	'''
 	Description:
 		Get simple description from google search wiki result.
@@ -192,17 +191,16 @@ def get_wiki_description(soup):
 		spans = soup.find('div', class_='kno-rdesc').find('div').find_all('span', recursive=False)
 		answer = ''.join(span.text for span in spans[:-1]).replace('\n', '')
 		return answer
-	except Exception as e:
-		print(e)
+	except:
 		return None
 
 
 def response(text):
 	# get search url for GoogleSearch
-	url = get_google_search_url(text, start_num=0, total_num=5)
+	url = _get_google_search_url(text, start_num=0, total_num=5)
 
 	# get html by url
-	html = get_google_search_html(url)
+	html = _get_google_search_html(url)
 	if not html:
 		logging.info("Answerer didn't get html. Return None")
 		return None
@@ -210,19 +208,19 @@ def response(text):
 	soup = BeautifulSoup(html, 'lxml')
 
 	# try to get simple description from GoogleSearch result
-	answer = get_wiki_description(soup)
+	answer = _get_wiki_description(soup)
 	if answer:
 		logging.info("Answerer return simple description from GoogleSearch Result. Return SimpleDescription.")
 		return answer
 
 	# if we didn't get simple description, then we try to get link of Wiki by GoogleSearch result
-	link = get_wiki_link(soup)
+	link = _get_wiki_link(soup)
 	if not link:
 		logging.info("Answerer didn't get link of Wiki from GoogleSearch Result. Return None.")
 		return None
 
 	# return the first paragraph of wikipedia page
-	answer = get_wiki_paragraph(link)
+	answer = _get_wiki_paragraph(link)
 	if not answer:
 		logging.info("Answerer didn't get first paragraph of Wikipedia page. Return None.")
 		return None
