@@ -1,8 +1,13 @@
 # Chotbot
 
+## Installation: 
+```
+pip install -r requirements
+pip install torch===1.6.0 torchvision===0.7.0 -f https://download.pytorch.org/whl/torch_stable.html
+```
 
 ## chatbot資料夾
-- chatbot資料夾底下為聊天機器人及用QA的應用，能產生如下的對話。詳情請看chatbot資料夾底下的README.md
+- chatbot資料夾底下為聊天機器人及QA的應用，能產生如下的對話。詳情請看chatbot資料夾底下的README.md
   - ![](https://i.imgur.com/xEZhkrP.png)
 
 

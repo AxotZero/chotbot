@@ -18,7 +18,11 @@ def logging_setting():
 
 
 def get_question(text):
-	
+	'''
+	Description:
+		Try to get question keyword from text(rule-based).
+
+	'''
 	explain = ['知道', '理解', '解釋', '了解', '瞭解']
 	base_q = ['什麼', '甚麼', '誰', '啥']
 	q_end = ['阿?', '阿', '啊?', '啊', '嗎?', '嗎', '?']
@@ -61,7 +65,7 @@ def get_question(text):
 	if m and m.group(2) != '':
 		return m.group(2)
 
-	return ''
+	return None
 
 
 class ChatBot():
@@ -71,8 +75,8 @@ class ChatBot():
 
 
 	def __del__(self):
-		self.write_chatlog("------對話結束------\n")
-		self.write_chatlog("\n")
+		self._write_chatlog("------對話結束------\n")
+		self._write_chatlog("\n")
 
 		if self.chatlog_writer:
 			self.chatlog_writer.close()
@@ -87,27 +91,36 @@ class ChatBot():
 			return chatlog_writer 
 
 
-	def write_chatlog(self, text):
+	def _write_chatlog(self, text):
 		if self.chatlog_writer:
 			self.chatlog_writer.write(text + '\n')
 
 
 	def response(self, text):
-		self.write_chatlog('user: '+ text)
+		self._write_chatlog('user: '+ text)
 
+		# 獲取問題關鍵字
 		question = get_question(text)
 		response = None
-		if question:
+
+		# 若有得到問題的關鍵字則丟去answerer回答
+		if question is not None:
 			response = answerer.response(question)
 		
-		if not response:
+		if response:
+			logging.info('answerer: ' + response)
+		else:
+			# 若是沒有得到問題關鍵字或是answerer回答不出來，則丟去chatter聊天
 			response = self.chatter_bot.response(text)
 			logging.info('chatter: ' + response)
-		else:
-			self.chatter_bot.update_history_text(response)
-			logging.info('answerer: ' + response)
 
-		self.write_chatlog('chatbot: '+ response)
+		# 預防空字串
+		if not response:
+			logging.info('response is empty!!!!')
+			response = '我不清楚你在說啥ㄟ'
+
+
+		self._write_chatlog('chatbot: '+ response)
 		return response
 
 

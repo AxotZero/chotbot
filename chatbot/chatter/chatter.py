@@ -3,6 +3,8 @@ from os.path import join, exists
 import copy
 import logging
 from easydict import EasyDict
+import random
+import time
 
 import torch
 from transformers.modeling_gpt2 import GPT2Config, GPT2LMHeadModel
@@ -10,7 +12,7 @@ from transformers import BertTokenizer
 import torch.nn.functional as F
 from googletrans import Translator
 
-
+random.seed(int(time.time()))
 def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
     """ Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
         Args:
@@ -85,7 +87,10 @@ class Chatter():
         
         file_dir = os.path.dirname(os.path.abspath(__file__))
         args.dialogue_model_path = join(file_dir, config.model_path, 'dialogue')
-        args.mmi_model_path = join(file_dir, config.model_path, 'mmi')
+        if config.use_mmi:
+            args.mmi_model_path = join(file_dir, config.model_path, 'mmi')
+        else:
+            args.mmi_model_path = None
         args.vocab_path = join(file_dir, config.model_path, 'vocab.txt')
         
         logging.info('Finish Processing Config.')
@@ -138,16 +143,17 @@ class Chatter():
 
 
     def _get_mmi_model(self):
-        logging.info("Start getting mmi model.")
-
         args = self.args
-        mmi_model = GPT2LMHeadModel.from_pretrained(args.mmi_model_path)
-        mmi_model.to(self.device)
-        mmi_model.eval()
-
-        logging.info("Finish getting mmi model.")
-
-        return mmi_model
+        try:
+            logging.info("Start getting mmi model.")
+            mmi_model = GPT2LMHeadModel.from_pretrained(args.mmi_model_path)
+            mmi_model.to(self.device)
+            mmi_model.eval()
+            logging.info("Finish getting mmi model.")
+            return mmi_model
+        except:
+            logging.info('Cannot find mmi model in directory, we will choose response randomly.')
+            return None
 
 
     def _get_translator(self):
@@ -160,6 +166,9 @@ class Chatter():
 
 
     def _get_input_ids(self, text):
+        '''
+        獲取batch of input_ids的function
+        '''
         args = self.args
 
         self.update_history_text(text)
@@ -177,6 +186,9 @@ class Chatter():
 
 
     def _get_candidate_response(self, input_ids):
+        '''
+        獲取候選response的function
+        '''
         args = self.args
 
         generated = []  # 二维数组，维度为(生成的response的最大长度，candidate_num)，generated[i,j]表示第j个response的第i个token的id
@@ -232,23 +244,30 @@ class Chatter():
         return candidate_responses
 
 
-    def _candidate_response_filter(self, candidate_response):
+    def _filter_candidate_response(self, candidate_response):
+        '''
+        過濾candidate response的function
+        '''
+
         banned_list = []
         pop_list = []
         translator = Translator()
-        banned_words = ['圖片評論', '屎', '傻逼', '智障']
+        banned_words = ['圖片評論', '屎', '傻逼', '智障', '你大爺', '白癡']
         for i, response in enumerate(candidate_response):
             text = ''.join(self.tokenizer.convert_ids_to_tokens(response))
             text = translator.translate(text, dest='zh-tw').text
 
+            # 紀錄已經出現過的response
             if text in self.history:
                 pop_list.append(i)
 
+            # pop掉出現禁字的response
             for banned_word in banned_words:
                 if banned_word in text:
                     candidate_response.pop(i)
                     break
 
+        # 若不會全部被刪光的話，再把pop_list的東西pop掉
         if len(pop_list) != len(candidate_response):
             for i in pop_list:
                 candidate_response.pop(i)
@@ -256,65 +275,99 @@ class Chatter():
         return candidate_response
 
 
-    def _select_response(self, candidate_response):
+    def _select_response_with_mmi(self, candidate_response):
+        '''
+        用mmi_model選一個最好的response回傳
+        '''
         args = self.args
+        best_response = None
+        min_loss = float("inf")
 
-        loss_list = []
+        # mmi_model訓練都是將前面的dialogue倒過來，因此使用上也要這麼做
         reverse_history = reversed(self.history[-args.max_history_len:])
-
         for response in candidate_response:
+            # 轉換成token_id
             mmi_input_id = [self.tokenizer.cls_token_id]  # 每个input以[CLS]为开头
             mmi_input_id.extend(response)
             mmi_input_id.append(self.tokenizer.sep_token_id)
 
+            # 把history也append進去，好讓gpt2產生過去的對話
             for history_utr in reverse_history:
                 mmi_input_id.extend(history_utr)
                 mmi_input_id.append(self.tokenizer.sep_token_id)
             mmi_input_tensor = torch.tensor(mmi_input_id).long().to(self.device)
+
+            # 算loss
             out = self.mmi_model(input_ids=mmi_input_tensor, labels=mmi_input_tensor)
             loss = out[0].item()
 
+            # 選最好的response
+            if loss < min_loss:
+                min_loss = loss
+                best_response = response
             if args.debug:
                 text = self.tokenizer.convert_ids_to_tokens(response)
                 logging.info("{} loss:{}".format("".join(text), loss))
 
-            loss_list.append(loss)
-
-
-        best_response = ""
-        pairs = sorted(zip(candidate_response, loss_list), key=lambda s: s[1])
-        for response, _ in pairs:
-            if response in reverse_history:
-                continue
-            else:
-                best_response = response
-                break 
-
-        if best_response == "":
-            best_response = pairs[0][0]
-
+            
         self.update_history_id(best_response)
         return best_response
 
 
+    def _select_response_randomly(self, candidate_response):
+        '''
+        隨機選一個response回傳
+        '''
+        args = self.args
+
+        best_response = random.choice(candidate_response)
+        if args.debug:
+            for response in candidate_response:
+                text = self.tokenizer.convert_ids_to_tokens(response)
+                logging.info("{} ".format("".join(text)))
+
+        self.update_history_id(best_response)   
+        return best_response
+
+
     def response(self, text):
+        '''
+        最主要的function，輸入一句話(text)，回你一句話(text)
+        '''
+        
         if self.translator:
             text = self.translator.translate(text, dest='zh-cn').text
 
+        # 得到batch of input_ids
         input_ids = self._get_input_ids(text)
+
+        # 得到候選response
         candidate_response = self._get_candidate_response(input_ids)
-        candidate_response = self._candidate_response_filter(candidate_response)
-        response = self._select_response(candidate_response)
-        text = self.tokenizer.convert_ids_to_tokens(response)
-        text = "".join(text)
+
+        # 過濾候選response
+        candidate_response = self._filter_candidate_response(candidate_response)
+
+        if self.mmi_model is None:
+            # 若是沒有mmi_model，則隨機從候選response抽
+            response = self._select_response_randomly(candidate_response)
+        else:
+            # 若有，則給mmi_model選
+            response = self._select_response_with_mmi(candidate_response)
+
+        # 把response轉成人看得懂的
+        response = self.tokenizer.convert_ids_to_tokens(response)
+        response = "".join(response)
 
         if self.translator:
-            text = self.translator.translate(text, dest='zh-tw').text
+            response = self.translator.translate(response, dest='zh-tw').text
 
-        return text
+        return response
 
 
     def update_history_text(self, text):
+        '''
+            用文字 append history的function
+        '''
         args = self.args
 
         if len(text) > args.max_len:
@@ -328,6 +381,9 @@ class Chatter():
 
 
     def update_history_id(self, ids):
+        '''
+            用token_id append history的function
+        '''
         args = self.args
 
         if len(ids) > args.max_len:
